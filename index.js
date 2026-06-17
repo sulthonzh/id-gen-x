@@ -163,13 +163,30 @@ function uuidv7(opts = {}) {
   const hasExplicitTs = timestamp !== undefined;
   let ms = timestamp instanceof Date ? timestamp.getTime() : (typeof timestamp === 'number' ? timestamp : Date.now());
 
-  if (monotonic && !hasExplicitTs && ms <= _v7LastMs) {
-    ms = _v7LastMs;
-    _v7Counter++;
-    if (_v7Counter > 0x0fff) {
-      ms++; // overflow, advance to next ms
-      _v7Counter = 0;
+  if (monotonic) {
+    if (hasExplicitTs) {
+      // For explicit timestamps, ensure correct counter behavior
+      if (ms < _v7LastMs) {
+        _v7Counter = 0;
+      } else if (ms === _v7LastMs) {
+        _v7Counter++;
+        if (_v7Counter > 0x0fff) {
+          ms++;
+          _v7Counter = 0;
+        }
+      }
+    } else {
+      // Automatic timestamp handling with monotonic logic
+      if (ms <= _v7LastMs) {
+        ms = _v7LastMs;
+        _v7Counter++;
+        if (_v7Counter > 0x0fff) {
+          ms++; // overflow, advance to next ms
+          _v7Counter = 0;
+        }
+      }
     }
+    _v7LastMs = ms;
   } else {
     _v7LastMs = ms;
     _v7Counter = hasExplicitTs ? 0 : randomInt(0x1000);
