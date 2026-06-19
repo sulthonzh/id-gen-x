@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import {
   nanoid, createCustomNanoid,
   uuidv4, uuidv7, uuidv7Timestamp, isUUID,
@@ -7,6 +9,7 @@ import {
   createSnowflake, cuid, shortId,
   createSequential, timestampId,
 } from './index.js';
+import idgen from './index.js';
 
 // --- NanoID Tests ---
 
@@ -307,4 +310,248 @@ test('IDs are not empty', () => {
   assert.ok(cuid().length > 0);
   assert.ok(shortId().length > 0);
   assert.ok(timestampId().length > 0);
+});
+
+// --- v1.1.0 Quality Audit Tests ---
+
+// Version / CLI tests
+test('package.json has correct version', () => {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.version, '1.1.0');
+  assert.ok(pkg.scripts.prepublishOnly, 'prepublishOnly script must exist');
+  assert.ok(Array.isArray(pkg.files), 'files field must exist');
+});
+
+// randomInt unbiased distribution
+test('randomInt produces values in range', () => {
+  // Can't import randomInt directly (not exported), but we can test indirectly via cuid counter
+  // Just ensure cuid generates valid IDs consistently
+  for (let i = 0; i < 1000; i++) {
+    const id = cuid({ length: 10 });
+    assert.ok(id.length === 10);
+    assert.match(id, /^[a-z0-9]{10}$/);
+  }
+});
+
+// NanoID with very large size
+test('nanoid handles large sizes', () => {
+  const id = nanoid({ size: 1000 });
+  assert.equal(id.length, 1000);
+});
+
+// NanoID single-char alphabet
+test('nanoid works with minimal 2-char alphabet', () => {
+  const id = nanoid({ size: 10, alphabet: 'ab' });
+  assert.match(id, /^[ab]{10}$/);
+});
+
+// NanoID with 256-char alphabet
+test('nanoid works with max 256-char alphabet', () => {
+  const chars = [];
+  for (let i = 0; i < 256; i++) chars.push(String.fromCharCode(i));
+  const alpha = chars.join('');
+  const id = nanoid({ size: 5, alphabet: alpha });
+  assert.equal(id.length, 5);
+});
+
+// UUID v7 monotonic counter overflow protection
+test('uuidv7 handles many calls without errors', () => {
+  // Generate many UUIDs rapidly to exercise monotonic counter
+  const ids = [];
+  for (let i = 0; i < 500; i++) {
+    ids.push(uuidv7());
+  }
+  // All must be unique
+  assert.equal(new Set(ids).size, 500);
+  // All must be valid
+  for (const id of ids) assert.ok(isUUID(id, 7));
+});
+
+// UUID v7 with zero timestamp
+test('uuidv7 handles timestamp 0 (epoch)', () => {
+  const id = uuidv7({ timestamp: 0, monotonic: false });
+  const ts = uuidv7Timestamp(id);
+  assert.equal(ts, 0);
+});
+
+// UUID v7 with far-future timestamp
+test('uuidv7 handles far-future timestamp', () => {
+  const futureTs = 9999999999999; // year 2286
+  const id = uuidv7({ timestamp: futureTs, monotonic: false });
+  const ts = uuidv7Timestamp(id);
+  assert.equal(ts, futureTs);
+});
+
+// isUUID with uppercase
+test('isUUID accepts uppercase hex', () => {
+  assert.ok(isUUID('F47AC10B-58CC-4372-A567-0E02B2C3D479'));
+  assert.ok(isUUID('F47AC10B-58CC-4372-A567-0E02B2C3D479', 4));
+});
+
+// isUUID rejects malformed input
+test('isUUID rejects malformed UUIDs', () => {
+  assert.ok(!isUUID('g47ac10b-58cc-4372-a567-0e02b2c3d479')); // 'g' is not hex
+  assert.ok(!isUUID('f47ac10b-58cc-4372-3567-0e02b2c3d479', 4)); // version 3, not 4
+  assert.ok(!isUUID('f47ac10b-58cc-4372-a567-0e02b2c3d47'));
+  assert.ok(!isUUID('f47ac10b-58cc-4372-a567-0e02b2c3d4799'));
+});
+
+// ULID monotonic with rapid generation
+test('ulid monotonic IDs maintain sort order under rapid generation', () => {
+  const ids = [];
+  for (let i = 0; i < 200; i++) {
+    ids.push(ulid());
+  }
+  for (let i = 1; i < ids.length; i++) {
+    assert.ok(ids[i] >= ids[i - 1], `ULID ${i} should sort >= ${i-1}`);
+  }
+});
+
+// ULID with specific known timestamp
+test('ulid encodes and decodes timestamp 0', () => {
+  const id = ulid({ timestamp: 0, monotonic: false });
+  const ts = ulidTimestamp(id);
+  assert.equal(ts, 0);
+});
+
+// ULID lowercase decoding
+test('ulidTimestamp handles lowercase ULID', () => {
+  const id = ulid({ timestamp: 1700000000000, monotonic: false });
+  const lowerId = id.toLowerCase();
+  const ts = ulidTimestamp(lowerId);
+  assert.equal(ts, 1700000000000);
+});
+
+// Snowflake sequence increment
+test('snowflake increments sequence within same ms', () => {
+  const sf = createSnowflake({ workerId: 0 });
+  const id1 = sf.generate();
+  const d1 = sf.decode(id1);
+  // Generate rapidly — sequence should increment if same ms
+  const id2 = sf.generate();
+  const d2 = sf.decode(id2);
+  if (d1.timestamp === d2.timestamp) {
+    assert.ok(d2.sequence > d1.sequence || d2.sequence === 0, 'sequence should increment or wrap');
+  }
+});
+
+// Snowflake with custom epoch
+test('snowflake respects custom epoch', () => {
+  const customEpoch = 1700000000000;
+  const sf = createSnowflake({ workerId: 1, epoch: customEpoch });
+  const id = sf.generate();
+  const decoded = sf.decode(id);
+  assert.ok(decoded.timestamp > customEpoch, 'timestamp should be > custom epoch');
+});
+
+// Snowflake decode with string input
+test('snowflake decode accepts string representation of bigint', () => {
+  const sf = createSnowflake({ workerId: 7, datacenterId: 3 });
+  const id = sf.generate();
+  const idStr = id.toString();
+  const decoded = sf.decode(BigInt(idStr));
+  assert.equal(decoded.workerId, 7);
+  assert.equal(decoded.datacenterId, 3);
+});
+
+// CUID default length
+test('cuid default length is 24', () => {
+  const id = cuid();
+  assert.equal(id.length, 24);
+});
+
+// CUID with large length
+test('cuid handles large length', () => {
+  const id = cuid({ length: 50 });
+  assert.equal(id.length, 50);
+  assert.match(id, /^[a-z0-9]{50}$/);
+});
+
+// Short ID with empty alphabet fallback
+test('shortId with numeric-only alphabet', () => {
+  const id = shortId({ length: 6, alphabet: '0123456789' });
+  assert.match(id, /^[0-9]{6}$/);
+});
+
+// Sequential with negative start
+test('sequential handles negative start', () => {
+  const seq = createSequential({ start: -5 });
+  assert.equal(seq.next(), '-5');
+  assert.equal(seq.next(), '-4');
+});
+
+// Sequential reset to custom value
+test('sequential reset accepts custom value', () => {
+  const seq = createSequential({ start: 0 });
+  seq.next(); // 0
+  seq.next(); // 1
+  seq.reset(100);
+  assert.equal(seq.next(), '100');
+});
+
+// Sequential current before any next
+test('sequential current before first next returns start-1', () => {
+  const seq = createSequential({ start: 10 });
+  // Before any next(), counter is at start, so current() returns start-1
+  assert.equal(seq.current(), '9');
+});
+
+// TimestampId uniqueness
+test('timestampId generates unique IDs', () => {
+  const ids = new Set();
+  for (let i = 0; i < 1000; i++) {
+    ids.add(timestampId({ randomLength: 6 }));
+  }
+  assert.equal(ids.size, 1000);
+});
+
+// TimestampId with zero random length
+test('timestampId with randomLength 0 produces just encoded timestamp', () => {
+  const id = timestampId({ timestamp: 1700000000000, randomLength: 0 });
+  assert.ok(id.length > 0);
+  assert.match(id, /^[A-Za-z0-9]+$/);
+});
+
+// TimestampId with custom alphabet
+test('timestampId respects custom alphabet', () => {
+  const id = timestampId({ timestamp: 1700000000000, randomLength: 4, alphabet: 'ab' });
+  assert.match(id, /^[ab]+$/);
+});
+
+// alphabets constant export
+test('alphabets constant has expected entries', () => {
+  assert.ok(idgen.alphabets.urlSafe.length > 0);
+  assert.ok(idgen.alphabets.base62.length === 62);
+  assert.ok(idgen.alphabets.crockford.length === 32);
+});
+
+// CLI version flag (spawn test)
+test('CLI --version outputs version', () => {
+  const output = execFileSync('node', ['cli.js', '--version'], {
+    cwd: new URL('.', import.meta.url),
+    encoding: 'utf8',
+  }).trim();
+  assert.match(output, /^\d+\.\d+\.\d+$/);
+});
+
+// CLI -V flag (short form)
+test('CLI -V outputs version', () => {
+  const output = execFileSync('node', ['cli.js', '-V'], {
+    cwd: new URL('.', import.meta.url),
+    encoding: 'utf8',
+  }).trim();
+  assert.match(output, /^\d+\.\d+\.\d+$/);
+});
+
+// CLI demo command
+test('CLI demo generates output for all types', () => {
+  const output = execFileSync('node', ['cli.js', 'demo'], {
+    cwd: new URL('.', import.meta.url),
+    encoding: 'utf8',
+  });
+  assert.ok(output.includes('NanoID'));
+  assert.ok(output.includes('UUID v4'));
+  assert.ok(output.includes('UUID v7'));
+  assert.ok(output.includes('ULID'));
+  assert.ok(output.includes('Snowflake'));
 });

@@ -1,15 +1,26 @@
 {
   "name": "id-gen-x",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-dependency ID generation library: NanoID, UUID v4/v7, ULID, Snowflake, CUID, and more",
   "type": "module",
   "main": "index.js",
+  "scripts": {
+    "test": "node test.js",
+    "prepublishOnly": "npm test"
+  },
   "bin": {
     "idgen": "cli.js"
   },
   "exports": {
     ".": "./index.js"
   },
+  "files": [
+    "index.js",
+    "cli.js",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "keywords": ["id", "uuid", "ulid", "nanoid", "snowflake", "cuid", "unique", "identifier", "zero-dependency"],
   "license": "MIT",
   "author": "sulthonzh",

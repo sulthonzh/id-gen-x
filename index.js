@@ -29,9 +29,14 @@ function randomBytes(length) {
 }
 
 function randomInt(max) {
-  // Unbiased random integer in [0, max)
-  const bytes = randomBytes(4);
-  const val = (bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]) >>> 0;
+  // Unbiased random integer in [0, max) using rejection sampling
+  // Avoids modulo bias that `val % max` introduces when max doesn't divide 2^32 evenly
+  const limit = Math.floor(0xFFFFFFFF / max) * max;
+  let val;
+  do {
+    const bytes = randomBytes(4);
+    val = (bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]) >>> 0;
+  } while (val >= limit);
   return val % max;
 }
 
@@ -245,6 +250,7 @@ function isUUID(str, version) {
 
 let _ulidLastMs = 0;
 let _ulidCounter = 0;
+let _ulidPrevRand = 0n;
 
 /**
  * Generate a ULID (26 chars, Crockford Base32).
@@ -283,24 +289,20 @@ function ulid(opts = {}) {
   let tsPart = encodeCrockford(tsBig, 10);
 
   // For randomness/counter, use 80 bits
+  // On monotonic increment within same ms: keep high bits from previous random,
+  // just increment the low portion to preserve sort order while maintaining randomness
   let randBig;
-  if (monotonic && ms === _ulidLastMs && _ulidCounter > 0) {
-    // Use counter as part of randomness for monotonicity
-    randBig = BigInt(_ulidCounter);
+  if (monotonic && _ulidCounter > 0) {
+    // Increment previous randomness by 1 in the 80-bit space
+    // This ensures monotonic ordering while keeping random distribution
+    randBig = _ulidPrevRand + BigInt(_ulidCounter);
   } else {
     const rb = randomBytes(10);
     randBig = 0n;
     for (let i = 0; i < 10; i++) {
       randBig = (randBig << 8n) | BigInt(rb[i]);
     }
-  }
-
-  // Pad counter with random bits for uniqueness
-  if (randBig < 0x1000000000000000000n) {
-    const rb2 = randomBytes(5);
-    let fill = 0n;
-    for (let i = 0; i < 5; i++) fill = (fill << 8n) | BigInt(rb2[i]);
-    randBig = randBig | (fill & 0xffff000000000000n);
+    _ulidPrevRand = randBig;
   }
 
   let randPart = encodeCrockford(randBig, 16);

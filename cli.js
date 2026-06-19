@@ -2,6 +2,9 @@
 'use strict';
 
 import idgen from './index.js';
+import { readFileSync } from 'fs';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 
 const [cmd, ...args] = process.argv.slice(2);
 
@@ -154,6 +157,10 @@ switch (cmd) {
   case '--help':
   case '-h':
     usage();
+    break;
+  case '--version':
+  case '-V':
+    console.log(pkg.version);
     break;
   default:
     console.error(`Unknown command: ${cmd}\n`);

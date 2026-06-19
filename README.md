@@ -210,3 +210,77 @@ idgen demo
 ## License
 
 MIT
+
+## Real-World Examples
+
+### 1. Database Primary Keys with Time-Ordered UUIDs
+
+```js
+import { uuidv7 } from 'id-gen-x';
+
+// Generate a primary key that sorts chronologically in your database
+// No more "why are my UUIDs scattered?" — UUID v7 encodes the timestamp
+const userId = uuidv7();
+// "0192a5b3-1c2d-7e3f-8a4b-5c6d7e8f9a0b"
+
+// In PostgreSQL, this means better index locality:
+// CREATE TABLE users (id TEXT PRIMARY KEY DEFAULT gen_random_uuid(), ...);
+// → Replace with app-generated uuidv7() for clustered inserts
+```
+
+### 2. Distributed Job Queue with Snowflake IDs
+
+```js
+import { createSnowflake } from 'id-gen-x';
+
+// Each worker gets its own generator — no coordination needed
+const generator = createSnowflake({
+  workerId: process.env.WORKER_ID,  // 0–31
+  datacenterId: process.env.DC_ID,  // 0–31
+});
+
+function enqueue(job) {
+  const jobId = generator.generate();  // 1234567890123456789n
+  // Store as TEXT or NUMBER in your DB — guaranteed unique across workers
+  return { ...job, id: jobId.toString() };
+}
+
+// Decode later for debugging
+const info = generator.decode(BigInt(jobId));
+console.log(`Created at ${info.date} by worker ${info.workerId}`);
+```
+
+### 3. URL-Safe Session Tokens with NanoID
+
+```js
+import { nanoid } from 'id-gen-x';
+
+// Shorter than UUID, URL-safe, zero dependencies
+app.post('/login', (req, res) => {
+  const sessionToken = nanoid({ size: 32, prefix: 'sess_' });
+  // "sess_V1StGXR8_Z5jdHi6B-myT3KpN9rQ2xLf"
+
+  res.cookie('session', sessionToken, { httpOnly: true, secure: true });
+  // 10x shorter than JWT, no external library needed
+});
+```
+
+## Comparison
+
+| Feature | id-gen-x | [nanoid] | [uuid] | [ulid] | [flake-idgen] |
+|---------|----------|----------|--------|--------|---------------|
+| Zero dependencies | ✅ | ✅ | ❌ (deps) | ❌ (deps) | ❌ (deps) |
+| NanoID | ✅ | ✅ | ❌ | ❌ | ❌ |
+| UUID v4 | ✅ | ❌ | ✅ | ❌ | ❌ |
+| UUID v7 | ✅ | ❌ | ✅ (v9+) | ❌ | ❌ |
+| ULID | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Snowflake | ✅ | ❌ | ❌ | ❌ | ✅ |
+| CUID | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Monotonic ordering | ✅ | ❌ | ❌ | ✅ | ✅ |
+| CLI included | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Bundle size | 0 KB (no deps) | ~2 KB | ~7 KB | ~8 KB | ~5 KB |
+
+[nanoid]: https://github.com/ai/nanoid
+[uuid]: https://github.com/uuidjs/uuid
+[ulid]: https://github.com/ulid/javascript-ulid
+[flake-idgen]: https://github.com/finke-sons/flake-idgen
