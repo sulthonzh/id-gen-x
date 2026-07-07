@@ -32,4 +32,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sequential ID generator with prefix and padding
 - Timestamp ID generator with custom radix encoding
 - CLI tool (`idgen`) with decode commands and demo mode
-- 41 tests covering all generators
+- 70 tests covering all generators (expanded in subsequent patches)
